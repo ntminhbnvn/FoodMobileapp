@@ -1,29 +1,28 @@
-import { Request, Response } from "express";
-import prisma from "../prisma/client";
-
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.cancelOrder = exports.updateOrderStatus = exports.createOrder = exports.getOrderById = exports.getOrders = void 0;
+const client_1 = __importDefault(require("../prisma/client"));
 // Get all orders (for admin) or user's orders
-export const getOrders = async (req: Request, res: Response) => {
+const getOrders = async (req, res) => {
     try {
-        const userId = (req as any).user.userId;
-        const userRole = (req as any).user.role;
+        const userId = req.user.userId;
+        const userRole = req.user.role;
         const { status, page = 1, limit = 10 } = req.query;
-
-        const whereClause: any = {};
-        
+        const whereClause = {};
         // If user is not admin, only show their orders
         if (userRole !== 'ADMIN') {
             whereClause.userId = userId;
         }
-
         // Filter by status if provided
         if (status) {
             whereClause.status = status;
         }
-
         const skip = (Number(page) - 1) * Number(limit);
-
         const [orders, total] = await Promise.all([
-            prisma.order.findMany({
+            client_1.default.order.findMany({
                 where: whereClause,
                 include: {
                     user: {
@@ -51,9 +50,8 @@ export const getOrders = async (req: Request, res: Response) => {
                 skip,
                 take: Number(limit)
             }),
-            prisma.order.count({ where: whereClause })
+            client_1.default.order.count({ where: whereClause })
         ]);
-
         res.json({
             orders,
             pagination: {
@@ -63,27 +61,25 @@ export const getOrders = async (req: Request, res: Response) => {
                 pages: Math.ceil(total / Number(limit))
             }
         });
-    } catch (error) {
+    }
+    catch (error) {
         console.error("Get orders error:", error);
         res.status(500).json({ error: "Failed to fetch orders" });
     }
 };
-
+exports.getOrders = getOrders;
 // Get order by ID
-export const getOrderById = async (req: Request, res: Response) => {
+const getOrderById = async (req, res) => {
     try {
         const { id } = req.params;
-        const userId = (req as any).user.userId;
-        const userRole = (req as any).user.role;
-
-        const whereClause: any = { id: parseInt(id) };
-        
+        const userId = req.user.userId;
+        const userRole = req.user.role;
+        const whereClause = { id: parseInt(id) };
         // If user is not admin, only allow access to their own orders
         if (userRole !== 'ADMIN') {
             whereClause.userId = userId;
         }
-
-        const order = await prisma.order.findFirst({
+        const order = await client_1.default.order.findFirst({
             where: whereClause,
             include: {
                 user: {
@@ -107,62 +103,55 @@ export const getOrderById = async (req: Request, res: Response) => {
                 }
             }
         });
-
         if (!order) {
             return res.status(404).json({ error: "Order not found" });
         }
-
         res.json({ order });
-    } catch (error) {
+    }
+    catch (error) {
         console.error("Get order error:", error);
         res.status(500).json({ error: "Failed to fetch order" });
     }
 };
-
+exports.getOrderById = getOrderById;
 // Create a new order
-export const createOrder = async (req: Request, res: Response) => {
+const createOrder = async (req, res) => {
     try {
-        const userId = (req as any).user.userId;
+        const userId = req.user.userId;
         const { items } = req.body;
-
         // Validate required fields
         if (!items || !Array.isArray(items) || items.length === 0) {
-            return res.status(400).json({ 
-                error: "Order items are required" 
+            return res.status(400).json({
+                error: "Order items are required"
             });
         }
-
         // Validate each item
         for (const item of items) {
             if (!item.productId || !item.quantity || !item.price) {
-                return res.status(400).json({ 
-                    error: "Each item must have productId, quantity, and price" 
+                return res.status(400).json({
+                    error: "Each item must have productId, quantity, and price"
                 });
             }
         }
-
         // Check if all products exist and are available
-        const productIds = items.map((item: any) => item.productId);
-        const products = await prisma.product.findMany({
+        const productIds = items.map((item) => item.productId);
+        const products = await client_1.default.product.findMany({
             where: {
                 id: { in: productIds },
                 isAvailable: true
             }
         });
-
         if (products.length !== productIds.length) {
-            return res.status(400).json({ 
-                error: "Some products are not available or do not exist" 
+            return res.status(400).json({
+                error: "Some products are not available or do not exist"
             });
         }
-
         // Calculate total
-        const total = items.reduce((sum: number, item: any) => {
+        const total = items.reduce((sum, item) => {
             return sum + (item.price * item.quantity);
         }, 0);
-
         // Create order with items in a transaction
-        const order = await prisma.$transaction(async (tx) => {
+        const order = await client_1.default.$transaction(async (tx) => {
             // Create the order
             const newOrder = await tx.order.create({
                 data: {
@@ -171,29 +160,22 @@ export const createOrder = async (req: Request, res: Response) => {
                     status: 'PENDING'
                 }
             });
-
             // Create order items
-            const orderItems = await Promise.all(
-                items.map((item: any) =>
-                    tx.orderItem.create({
-                        data: {
-                            orderId: newOrder.id,
-                            productId: item.productId,
-                            quantity: item.quantity,
-                            price: item.price
-                        }
-                    })
-                )
-            );
-
+            const orderItems = await Promise.all(items.map((item) => tx.orderItem.create({
+                data: {
+                    orderId: newOrder.id,
+                    productId: item.productId,
+                    quantity: item.quantity,
+                    price: item.price
+                }
+            })));
             return {
                 ...newOrder,
                 items: orderItems
             };
         });
-
         // Fetch the complete order with relations
-        const completeOrder = await prisma.order.findUnique({
+        const completeOrder = await client_1.default.order.findUnique({
             where: { id: order.id },
             include: {
                 user: {
@@ -216,49 +198,44 @@ export const createOrder = async (req: Request, res: Response) => {
                 }
             }
         });
-
         res.status(201).json({
             message: "Order created successfully",
             order: completeOrder
         });
-    } catch (error) {
+    }
+    catch (error) {
         console.error("Create order error:", error);
         res.status(500).json({ error: "Failed to create order" });
     }
 };
-
+exports.createOrder = createOrder;
 // Update order status (admin only)
-export const updateOrderStatus = async (req: Request, res: Response) => {
+const updateOrderStatus = async (req, res) => {
     try {
         const { id } = req.params;
         const { status } = req.body;
-        const userRole = (req as any).user.role;
-
+        const userRole = req.user.role;
         // Only admin can update order status
         if (userRole !== 'ADMIN') {
-            return res.status(403).json({ 
-                error: "Only admin can update order status" 
+            return res.status(403).json({
+                error: "Only admin can update order status"
             });
         }
-
         // Validate status
         const validStatuses = ['PENDING', 'CONFIRMED', 'PREPARING', 'READY', 'DELIVERED', 'CANCELLED'];
         if (!status || !validStatuses.includes(status)) {
-            return res.status(400).json({ 
-                error: "Valid status is required" 
+            return res.status(400).json({
+                error: "Valid status is required"
             });
         }
-
         // Check if order exists
-        const existingOrder = await prisma.order.findUnique({
+        const existingOrder = await client_1.default.order.findUnique({
             where: { id: parseInt(id) }
         });
-
         if (!existingOrder) {
             return res.status(404).json({ error: "Order not found" });
         }
-
-        const order = await prisma.order.update({
+        const order = await client_1.default.order.update({
             where: { id: parseInt(id) },
             data: { status },
             include: {
@@ -282,43 +259,39 @@ export const updateOrderStatus = async (req: Request, res: Response) => {
                 }
             }
         });
-
         res.json({
             message: "Order status updated successfully",
             order
         });
-    } catch (error) {
+    }
+    catch (error) {
         console.error("Update order status error:", error);
         res.status(500).json({ error: "Failed to update order status" });
     }
 };
-
+exports.updateOrderStatus = updateOrderStatus;
 // Cancel order (user can cancel their own pending orders)
-export const cancelOrder = async (req: Request, res: Response) => {
+const cancelOrder = async (req, res) => {
     try {
         const { id } = req.params;
-        const userId = (req as any).user.userId;
-
+        const userId = req.user.userId;
         // Check if order exists and belongs to user
-        const existingOrder = await prisma.order.findFirst({
+        const existingOrder = await client_1.default.order.findFirst({
             where: {
                 id: parseInt(id),
                 userId: userId
             }
         });
-
         if (!existingOrder) {
             return res.status(404).json({ error: "Order not found" });
         }
-
         // Only allow cancellation of pending orders
         if (existingOrder.status !== 'PENDING') {
-            return res.status(400).json({ 
-                error: "Only pending orders can be cancelled" 
+            return res.status(400).json({
+                error: "Only pending orders can be cancelled"
             });
         }
-
-        const order = await prisma.order.update({
+        const order = await client_1.default.order.update({
             where: { id: parseInt(id) },
             data: { status: 'CANCELLED' },
             include: {
@@ -335,13 +308,15 @@ export const cancelOrder = async (req: Request, res: Response) => {
                 }
             }
         });
-
         res.json({
             message: "Order cancelled successfully",
             order
         });
-    } catch (error) {
+    }
+    catch (error) {
         console.error("Cancel order error:", error);
         res.status(500).json({ error: "Failed to cancel order" });
     }
 };
+exports.cancelOrder = cancelOrder;
+//# sourceMappingURL=orderController.js.map
